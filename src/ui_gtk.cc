@@ -18,6 +18,7 @@ gint32 frame_height = 0;
 bool gtk_ready = false;
 bool is_fullscreen = false;
 std::mutex frame_mutex;
+std::mutex ui_mutex;
 
 bool ensure_gtk_ready() {
 	if (gtk_ready) {
@@ -198,6 +199,7 @@ gboolean ui_init(gint32 width, gint32 height)
 		return FALSE;
 	}
 
+	std::lock_guard<std::mutex> lock(ui_mutex);
 	if (window_instance != nullptr) {
 		return TRUE;
 	}
@@ -241,16 +243,22 @@ void ui_ensure_app(void)
 
 void ui_quit(void)
 {
-	if (window_instance == nullptr) {
-		return;
+	GtkWidget *window_to_destroy = nullptr;
+	{
+		std::lock_guard<std::mutex> lock(ui_mutex);
+		if (window_instance == nullptr) {
+			return;
+		}
+		window_to_destroy = window_instance;
+		window_instance = nullptr;
+		drawing_area = nullptr;
 	}
-	gtk_widget_destroy(window_instance);
-	window_instance = nullptr;
-	drawing_area = nullptr;
+	gtk_widget_destroy(window_to_destroy);
 }
 
 void ui_present(const guint16 *pixels, gint32 width, gint32 height)
 {
+	std::lock_guard<std::mutex> ui_lock(ui_mutex);
 	if (drawing_area == nullptr || pixels == nullptr || width <= 0 || height <= 0) {
 		return;
 	}
@@ -266,6 +274,7 @@ void ui_present(const guint16 *pixels, gint32 width, gint32 height)
 
 void ui_resize(gint32 width, gint32 height)
 {
+	std::lock_guard<std::mutex> ui_lock(ui_mutex);
 	if (window_instance == nullptr) {
 		return;
 	}
@@ -278,6 +287,7 @@ void ui_resize(gint32 width, gint32 height)
 
 void ui_toggle_fullscreen(void)
 {
+	std::lock_guard<std::mutex> ui_lock(ui_mutex);
 	if (window_instance == nullptr) {
 		return;
 	}
@@ -292,6 +302,7 @@ void ui_toggle_fullscreen(void)
 
 void ui_exit_fullscreen_if_needed(void)
 {
+	std::lock_guard<std::mutex> ui_lock(ui_mutex);
 	if (window_instance == nullptr || !is_fullscreen) {
 		return;
 	}
