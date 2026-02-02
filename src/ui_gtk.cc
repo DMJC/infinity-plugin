@@ -109,6 +109,12 @@ gboolean on_delete_event(GtkWidget *, GdkEvent *, gpointer) {
 	return FALSE;
 }
 
+void on_destroy(GtkWidget *, gpointer) {
+	std::lock_guard<std::mutex> lock(ui_mutex);
+	window_instance = nullptr;
+	drawing_area = nullptr;
+}
+
 void on_show(GtkWidget *, gpointer) {
 	display_notify_visibility(TRUE);
 }
@@ -224,6 +230,7 @@ gboolean ui_init(gint32 width, gint32 height)
 	gtk_widget_add_events(window_instance, GDK_KEY_PRESS_MASK);
 
 	g_signal_connect(window_instance, "delete-event", G_CALLBACK(on_delete_event), nullptr);
+	g_signal_connect(window_instance, "destroy", G_CALLBACK(on_destroy), nullptr);
 	g_signal_connect(window_instance, "show", G_CALLBACK(on_show), nullptr);
 	g_signal_connect(window_instance, "hide", G_CALLBACK(on_hide), nullptr);
 	g_signal_connect(window_instance, "key-press-event", G_CALLBACK(on_key_press), nullptr);
@@ -253,7 +260,9 @@ void ui_quit(void)
 		window_instance = nullptr;
 		drawing_area = nullptr;
 	}
-	gtk_widget_destroy(window_to_destroy);
+	if (GTK_IS_WIDGET(window_to_destroy)) {
+		gtk_widget_destroy(window_to_destroy);
+	}
 }
 
 void ui_present(const guint16 *pixels, gint32 width, gint32 height)
