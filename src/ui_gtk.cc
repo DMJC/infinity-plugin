@@ -27,12 +27,20 @@ void notify_current_size();
 
 void ensure_drawing_area();
 void reparent_drawing_area(GtkWidget *new_parent);
+void on_drawing_area_destroy(GtkWidget *widget, gpointer user_data);
 
-gboolean queue_draw(gpointer) {
-	if (drawing_area != nullptr) {
-		gtk_widget_queue_draw(drawing_area);
+gboolean queue_draw(gpointer data) {
+	GtkWidget *widget = GTK_WIDGET(data);
+	if (widget == nullptr) {
+		return G_SOURCE_REMOVE;
+	}
+
+	if (gtk_widget_get_realized(widget) && gtk_widget_get_visible(widget)) {
+		gtk_widget_queue_draw(widget);
 		process_events();
 	}
+
+	g_object_unref(widget);
 	return G_SOURCE_REMOVE;
 }
 
@@ -244,9 +252,17 @@ void connect_drawing_area_signals(GtkWidget *widget) {
 	g_signal_connect(widget, "draw", G_CALLBACK(on_draw), nullptr);
 	g_signal_connect(widget, "size-allocate", G_CALLBACK(on_size_allocate), nullptr);
 	g_signal_connect(widget, "key-press-event", G_CALLBACK(on_key_press), nullptr);
+	g_signal_connect(widget, "destroy", G_CALLBACK(on_drawing_area_destroy), nullptr);
 	gtk_widget_add_events(widget, GDK_KEY_PRESS_MASK);
 	gtk_widget_set_can_focus(widget, TRUE);
 	drawing_area_signals_connected = true;
+}
+
+void on_drawing_area_destroy(GtkWidget *widget, gpointer) {
+	if (drawing_area == widget) {
+		drawing_area = nullptr;
+	}
+	drawing_area_signals_connected = false;
 }
 
 void ensure_drawing_area() {
@@ -372,7 +388,11 @@ void ui_gtk_present(const guint16 *pixels, gint32 width, gint32 height)
 		frame_height = height;
 		frame_buffer.assign(pixels, pixels + (width * height));
 	}
-	g_main_context_invoke(nullptr, queue_draw, nullptr);
+	GtkWidget *widget = drawing_area;
+	if (widget != nullptr) {
+		g_object_ref(widget);
+		g_main_context_invoke(nullptr, queue_draw, widget);
+	}
 }
 
 void ui_gtk_resize(gint32 width, gint32 height)
