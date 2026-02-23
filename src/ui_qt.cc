@@ -245,9 +245,10 @@ void ui_qt_exit_fullscreen_if_needed(void)
 
 void *ui_qt_get_widget(void)
 {
-	ensure_app_instance();
-	if (window_instance == nullptr) {
-		ui_qt_init(512, 288);
-	}
+	/*
+	 * Do not create/show a window from the widget getter.
+	 * Audacious can probe both widget hooks, and eager creation would show
+	 * both GTK and Qt windows at load time.
+	 */
 	return window_instance;
 }

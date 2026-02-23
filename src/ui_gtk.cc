@@ -351,8 +351,11 @@ void *ui_gtk_get_widget(void)
 	if (!ensure_gtk_ready()) {
 		return nullptr;
 	}
-	if (window_instance == nullptr) {
-		ui_gtk_init(512, 288);
-	}
+	/*
+	 * Do not create/show a window here.
+	 * Audacious may query both toolkit widget hooks during plugin discovery;
+	 * creating windows from both hooks leads to two visible windows.
+	 * The selected backend window is created later through ui_init().
+	 */
 	return window_instance;
 }
