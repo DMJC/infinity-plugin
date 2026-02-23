@@ -18,10 +18,10 @@ libinfinity = static_library(
 
 infinite_lib = shared_library(
   'infinite',
-  sources: ['audacious.cc', 'ui_gtk.cc'],
+  sources: ['audacious.cc', 'ui.cc', 'ui_gtk.cc', 'ui_qt.cc'],
   include_directories: [src_inc],
   link_with: libinfinity,
-  dependencies: [audacious_dep, glib_dep, gtk_dep],
+  dependencies: [audacious_dep, glib_dep, gtk_dep, qt_dep],
   install: true,
   install_dir: plugin_install_dir,
 )

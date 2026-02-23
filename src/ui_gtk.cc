@@ -13,6 +13,7 @@ namespace {
 
 GtkWidget *window_instance = nullptr;
 GtkWidget *drawing_area = nullptr;
+bool drawing_area_signals_connected = false;
 std::vector<guint16> frame_buffer;
 gint32 frame_width = 0;
 gint32 frame_height = 0;
@@ -24,11 +25,22 @@ void process_events();
 gint current_scale_factor(GtkWidget *widget);
 void notify_current_size();
 
-gboolean queue_draw(gpointer) {
-	if (drawing_area != nullptr) {
-		gtk_widget_queue_draw(drawing_area);
+void ensure_drawing_area();
+void reparent_drawing_area(GtkWidget *new_parent);
+void on_drawing_area_destroy(GtkWidget *widget, gpointer user_data);
+
+gboolean queue_draw(gpointer data) {
+	GtkWidget *widget = GTK_WIDGET(data);
+	if (widget == nullptr) {
+		return G_SOURCE_REMOVE;
+	}
+
+	if (gtk_widget_get_realized(widget) && gtk_widget_get_visible(widget)) {
+		gtk_widget_queue_draw(widget);
 		process_events();
 	}
+
+	g_object_unref(widget);
 	return G_SOURCE_REMOVE;
 }
 
@@ -230,6 +242,54 @@ gboolean on_key_press(GtkWidget *, GdkEventKey *event, gpointer) {
 	return FALSE;
 }
 
+void connect_drawing_area_signals(GtkWidget *widget) {
+	if (widget == nullptr) {
+		return;
+	}
+	if (drawing_area_signals_connected) {
+		return;
+	}
+	g_signal_connect(widget, "draw", G_CALLBACK(on_draw), nullptr);
+	g_signal_connect(widget, "size-allocate", G_CALLBACK(on_size_allocate), nullptr);
+	g_signal_connect(widget, "key-press-event", G_CALLBACK(on_key_press), nullptr);
+	g_signal_connect(widget, "destroy", G_CALLBACK(on_drawing_area_destroy), nullptr);
+	gtk_widget_add_events(widget, GDK_KEY_PRESS_MASK);
+	gtk_widget_set_can_focus(widget, TRUE);
+	drawing_area_signals_connected = true;
+}
+
+void on_drawing_area_destroy(GtkWidget *widget, gpointer) {
+	if (drawing_area == widget) {
+		drawing_area = nullptr;
+	}
+	drawing_area_signals_connected = false;
+}
+
+void ensure_drawing_area() {
+	if (drawing_area == nullptr) {
+		drawing_area = gtk_drawing_area_new();
+		gtk_widget_set_hexpand(drawing_area, TRUE);
+		gtk_widget_set_vexpand(drawing_area, TRUE);
+		connect_drawing_area_signals(drawing_area);
+	}
+}
+
+void reparent_drawing_area(GtkWidget *new_parent) {
+	if (drawing_area == nullptr || new_parent == nullptr) {
+		return;
+	}
+	GtkWidget *parent = gtk_widget_get_parent(drawing_area);
+	if (parent == new_parent) {
+		return;
+	}
+	g_object_ref(drawing_area);
+	if (parent != nullptr && GTK_IS_CONTAINER(parent)) {
+		gtk_container_remove(GTK_CONTAINER(parent), drawing_area);
+	}
+	gtk_container_add(GTK_CONTAINER(new_parent), drawing_area);
+	g_object_unref(drawing_area);
+}
+
 gboolean on_window_state(GtkWidget *, GdkEventWindowState *event, gpointer) {
 	if ((event->changed_mask & GDK_WINDOW_STATE_FULLSCREEN) == 0) {
 		return FALSE;
@@ -250,13 +310,21 @@ void notify_current_size() {
 
 } // namespace
 
-gboolean ui_init(gint32 width, gint32 height)
+gboolean ui_gtk_init(gint32 width, gint32 height)
 {
 	if (!ensure_gtk_ready()) {
 		return FALSE;
 	}
 
 	if (window_instance != nullptr) {
+		return TRUE;
+	}
+
+	ensure_drawing_area();
+
+	GtkWidget *parent = gtk_widget_get_parent(drawing_area);
+	if (parent != nullptr && parent != window_instance) {
+		gtk_widget_set_size_request(drawing_area, std::max(width, 1), std::max(height, 1));
 		return TRUE;
 	}
 
@@ -272,42 +340,44 @@ gboolean ui_init(gint32 width, gint32 height)
 	gtk_window_set_resizable(GTK_WINDOW(window_instance), TRUE);
 	gtk_window_set_default_size(GTK_WINDOW(window_instance), logical_width, logical_height);
 
-	drawing_area = gtk_drawing_area_new();
-	gtk_widget_set_hexpand(drawing_area, TRUE);
-	gtk_widget_set_vexpand(drawing_area, TRUE);
-	gtk_container_add(GTK_CONTAINER(window_instance), drawing_area);
+	reparent_drawing_area(window_instance);
 
 	gtk_widget_add_events(window_instance, GDK_KEY_PRESS_MASK);
 
 	g_signal_connect(window_instance, "delete-event", G_CALLBACK(on_delete_event), nullptr);
 	g_signal_connect(window_instance, "show", G_CALLBACK(on_show), nullptr);
 	g_signal_connect(window_instance, "hide", G_CALLBACK(on_hide), nullptr);
-	g_signal_connect(window_instance, "key-press-event", G_CALLBACK(on_key_press), nullptr);
 	g_signal_connect(window_instance, "window-state-event", G_CALLBACK(on_window_state), nullptr);
-	g_signal_connect(drawing_area, "draw", G_CALLBACK(on_draw), nullptr);
-	g_signal_connect(drawing_area, "size-allocate", G_CALLBACK(on_size_allocate), nullptr);
+	g_signal_connect(window_instance, "key-press-event", G_CALLBACK(on_key_press), nullptr);
+	connect_drawing_area_signals(drawing_area);
 
 	gtk_widget_show_all(window_instance);
 	process_events();
 	return TRUE;
 }
 
-void ui_ensure_app(void)
+void ui_gtk_ensure_app(void)
 {
 	ensure_gtk_ready();
 }
 
-void ui_quit(void)
+void ui_gtk_quit(void)
 {
-	if (window_instance == nullptr) {
-		return;
+	if (window_instance != nullptr) {
+		drawing_area = nullptr;
+		drawing_area_signals_connected = false;
+		gtk_widget_destroy(window_instance);
+		window_instance = nullptr;
 	}
-	gtk_widget_destroy(window_instance);
-	window_instance = nullptr;
-	drawing_area = nullptr;
+
+	if (drawing_area != nullptr && gtk_widget_get_parent(drawing_area) == nullptr) {
+		gtk_widget_destroy(drawing_area);
+		drawing_area = nullptr;
+		drawing_area_signals_connected = false;
+	}
 }
 
-void ui_present(const guint16 *pixels, gint32 width, gint32 height)
+void ui_gtk_present(const guint16 *pixels, gint32 width, gint32 height)
 {
 	if (drawing_area == nullptr || pixels == nullptr || width <= 0 || height <= 0) {
 		return;
@@ -318,19 +388,26 @@ void ui_present(const guint16 *pixels, gint32 width, gint32 height)
 		frame_height = height;
 		frame_buffer.assign(pixels, pixels + (width * height));
 	}
-	g_main_context_invoke(nullptr, queue_draw, nullptr);
+	GtkWidget *widget = drawing_area;
+	if (widget != nullptr) {
+		g_object_ref(widget);
+		g_main_context_invoke(nullptr, queue_draw, widget);
+	}
 }
 
-void ui_resize(gint32 width, gint32 height)
+void ui_gtk_resize(gint32 width, gint32 height)
 {
 	if (window_instance == nullptr) {
+		if (drawing_area != nullptr) {
+			gtk_widget_set_size_request(drawing_area, std::max(width, 1), std::max(height, 1));
+		}
 		return;
 	}
 	auto *request = new ResizeRequest{width, height};
 	g_main_context_invoke(nullptr, apply_resize, request);
 }
 
-void ui_toggle_fullscreen(void)
+void ui_gtk_toggle_fullscreen(void)
 {
 	if (window_instance == nullptr) {
 		return;
@@ -338,10 +415,38 @@ void ui_toggle_fullscreen(void)
 	g_main_context_invoke(nullptr, apply_toggle_fullscreen, nullptr);
 }
 
-void ui_exit_fullscreen_if_needed(void)
+void ui_gtk_exit_fullscreen_if_needed(void)
 {
 	if (window_instance == nullptr || !is_fullscreen) {
 		return;
 	}
 	g_main_context_invoke(nullptr, apply_exit_fullscreen, nullptr);
+}
+
+void *ui_gtk_get_widget(void)
+{
+	if (!ensure_gtk_ready()) {
+		return nullptr;
+	}
+	ensure_drawing_area();
+
+	if (window_instance != nullptr) {
+		if (drawing_area != nullptr) {
+			g_object_ref(drawing_area);
+			gtk_container_remove(GTK_CONTAINER(window_instance), drawing_area);
+		}
+		gtk_widget_hide(window_instance);
+		gtk_widget_destroy(window_instance);
+		window_instance = nullptr;
+		if (drawing_area != nullptr) {
+			g_object_unref(drawing_area);
+		}
+	}
+	/*
+	 * Do not create/show a window here.
+	 * Audacious may query both toolkit widget hooks during plugin discovery;
+	 * creating windows from both hooks leads to two visible windows.
+	 * The selected backend window is created later through ui_init().
+	 */
+	return drawing_area;
 }

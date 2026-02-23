@@ -10,13 +10,15 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QPainter>
+#include <QPointer>
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <QWidget>
 #include <QtGlobal>
 #include <QEventLoop>
 
-#include <memory>
+#include <mutex>
+#include <vector>
 
 namespace {
 
@@ -33,10 +35,11 @@ public:
 			return;
 		}
 
-		QImage frame(reinterpret_cast<const uchar *>(pixels), width, height, QImage::Format_RGB16);
 		{
 			QMutexLocker locker(&frame_mutex_);
-			frame_ = frame.copy();
+			frame_width_ = width;
+			frame_height_ = height;
+			frame_pixels_.assign(pixels, pixels + (width * height));
 		}
 		QMetaObject::invokeMethod(this, "update", Qt::QueuedConnection);
 	}
@@ -56,12 +59,20 @@ public:
 protected:
 	void paintEvent(QPaintEvent *) override {
 		QPainter painter(this);
-		QImage frame_copy;
+		std::vector<guint16> frame_pixels;
+		gint32 frame_width = 0;
+		gint32 frame_height = 0;
 		{
 			QMutexLocker locker(&frame_mutex_);
-			frame_copy = frame_;
+			frame_pixels = frame_pixels_;
+			frame_width = frame_width_;
+			frame_height = frame_height_;
 		}
-		if (!frame_copy.isNull()) {
+		if (!frame_pixels.empty() && frame_width > 0 && frame_height > 0) {
+			QImage frame_copy(reinterpret_cast<const uchar *>(frame_pixels.data()),
+					 frame_width,
+					 frame_height,
+					 QImage::Format_RGB16);
 			painter.drawImage(rect(), frame_copy);
 		}
 	}
@@ -142,21 +153,14 @@ protected:
 
 private:
 	QMutex frame_mutex_;
-	QImage frame_;
+	std::vector<guint16> frame_pixels_;
+	gint32 frame_width_ = 0;
+	gint32 frame_height_ = 0;
 };
 
-InfinityWindow *window_instance = nullptr;
-std::unique_ptr<QApplication> app_instance;
-
-void ensure_app_instance() {
-	if (QApplication::instance() != nullptr) {
-		return;
-	}
-	static int argc = 1;
-	static char app_name[] = "infinity";
-	static char *argv[] = {app_name, nullptr};
-	app_instance = std::make_unique<QApplication>(argc, argv);
-}
+QPointer<InfinityWindow> window_instance;
+bool standalone_window = false;
+std::mutex window_mutex;
 
 void process_events() {
 	if (QApplication::instance() == nullptr) {
@@ -167,78 +171,130 @@ void process_events() {
 
 } // namespace
 
-gboolean ui_init(gint32 width, gint32 height)
+gboolean ui_qt_init(gint32 width, gint32 height)
 {
-	ensure_app_instance();
 	if (QApplication::instance() == nullptr) {
 		return FALSE;
 	}
 
-	if (window_instance != nullptr) {
-		return TRUE;
+	QPointer<InfinityWindow> window;
+	bool is_standalone = false;
+	{
+		std::lock_guard<std::mutex> lock(window_mutex);
+		if (window_instance.isNull()) {
+			window_instance = new InfinityWindow();
+			standalone_window = true;
+		}
+		window = window_instance;
+		is_standalone = standalone_window;
 	}
-
-	window_instance = new InfinityWindow();
-	window_instance->resize(width, height);
-	window_instance->show();
-	window_instance->raise();
+	if (window.isNull()) {
+		return FALSE;
+	}
+	window->resize(width, height);
+	if (!window.isNull() && is_standalone) {
+		window->show();
+		window->raise();
+	}
 	process_events();
 	return TRUE;
 }
 
-void ui_quit(void)
+void ui_qt_quit(void)
 {
-	if (window_instance == nullptr) {
+	std::lock_guard<std::mutex> lock(window_mutex);
+	if (window_instance.isNull()) {
 		return;
 	}
-	window_instance->close();
-	delete window_instance;
+	if (standalone_window) {
+		window_instance->close();
+		delete window_instance.data();
+	}
 	window_instance = nullptr;
+	standalone_window = false;
 }
 
-void ui_present(const guint16 *pixels, gint32 width, gint32 height)
+void ui_qt_present(const guint16 *pixels, gint32 width, gint32 height)
 {
-	if (window_instance == nullptr) {
+	QPointer<InfinityWindow> window;
+	{
+		std::lock_guard<std::mutex> lock(window_mutex);
+		window = window_instance;
+	}
+	if (window.isNull()) {
 		return;
 	}
-	window_instance->update_frame(pixels, width, height);
+	window->update_frame(pixels, width, height);
 	process_events();
 }
 
-void ui_resize(gint32 width, gint32 height)
+void ui_qt_resize(gint32 width, gint32 height)
 {
-	if (window_instance == nullptr) {
+	QPointer<InfinityWindow> window;
+	{
+		std::lock_guard<std::mutex> lock(window_mutex);
+		window = window_instance;
+	}
+	if (window.isNull()) {
 		return;
 	}
-	const qreal ratio = window_instance->devicePixelRatioF();
+	const qreal ratio = window->devicePixelRatioF();
 	const gint32 logical_width = qRound(width / ratio);
 	const gint32 logical_height = qRound(height / ratio);
-	window_instance->resize(logical_width, logical_height);
+	window->resize(logical_width, logical_height);
 	process_events();
 }
 
-void ui_toggle_fullscreen(void)
+void ui_qt_toggle_fullscreen(void)
 {
-	if (window_instance == nullptr) {
+	QPointer<InfinityWindow> window;
+	{
+		std::lock_guard<std::mutex> lock(window_mutex);
+		window = window_instance;
+	}
+	if (window.isNull()) {
 		return;
 	}
-	window_instance->set_fullscreen(!window_instance->is_fullscreen());
+	window->set_fullscreen(!window->is_fullscreen());
 	process_events();
-	const qreal ratio = window_instance->devicePixelRatioF();
-	display_notify_resize(qRound(window_instance->width() * ratio),
-			      qRound(window_instance->height() * ratio));
+	const qreal ratio = window->devicePixelRatioF();
+	display_notify_resize(qRound(window->width() * ratio),
+			      qRound(window->height() * ratio));
 }
 
-void ui_exit_fullscreen_if_needed(void)
+void ui_qt_exit_fullscreen_if_needed(void)
 {
-	if (window_instance == nullptr) {
+	QPointer<InfinityWindow> window;
+	{
+		std::lock_guard<std::mutex> lock(window_mutex);
+		window = window_instance;
+	}
+	if (window.isNull()) {
 		return;
 	}
-	if (window_instance->is_fullscreen()) {
-		window_instance->set_fullscreen(false);
+	if (window->is_fullscreen()) {
+		window->set_fullscreen(false);
 		process_events();
-		const qreal ratio = window_instance->devicePixelRatioF();
-		display_notify_resize(qRound(window_instance->width() * ratio),
-				      qRound(window_instance->height() * ratio));
+		const qreal ratio = window->devicePixelRatioF();
+		display_notify_resize(qRound(window->width() * ratio),
+				      qRound(window->height() * ratio));
 	}
+}
+
+void *ui_qt_get_widget(void)
+{
+	std::lock_guard<std::mutex> lock(window_mutex);
+	if (QApplication::instance() == nullptr) {
+		return nullptr;
+	}
+	if (window_instance.isNull()) {
+		window_instance = new InfinityWindow();
+		standalone_window = false;
+	}
+	/*
+	 * Create the widget instance but do not show a top-level window here.
+	 * Audacious can probe both widget hooks, and eager creation would show
+	 * both GTK and Qt windows at load time.
+	 */
+	return window_instance.data();
 }
