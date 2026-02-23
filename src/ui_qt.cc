@@ -10,13 +10,13 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QPainter>
+#include <QPointer>
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <QWidget>
 #include <QtGlobal>
 #include <QEventLoop>
 
-#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -158,20 +158,9 @@ private:
 	gint32 frame_height_ = 0;
 };
 
-InfinityWindow *window_instance = nullptr;
-std::unique_ptr<QApplication> app_instance;
+QPointer<InfinityWindow> window_instance;
 bool standalone_window = false;
 std::mutex window_mutex;
-
-void ensure_app_instance() {
-	if (QApplication::instance() != nullptr) {
-		return;
-	}
-	static int argc = 1;
-	static char app_name[] = "infinity";
-	static char *argv[] = {app_name, nullptr};
-	app_instance = std::make_unique<QApplication>(argc, argv);
-}
 
 void process_events() {
 	if (QApplication::instance() == nullptr) {
@@ -184,24 +173,26 @@ void process_events() {
 
 gboolean ui_qt_init(gint32 width, gint32 height)
 {
-	ensure_app_instance();
 	if (QApplication::instance() == nullptr) {
 		return FALSE;
 	}
 
-	InfinityWindow *window = nullptr;
+	QPointer<InfinityWindow> window;
 	bool is_standalone = false;
 	{
 		std::lock_guard<std::mutex> lock(window_mutex);
-		if (window_instance == nullptr) {
+		if (window_instance.isNull()) {
 			window_instance = new InfinityWindow();
 			standalone_window = true;
 		}
 		window = window_instance;
 		is_standalone = standalone_window;
 	}
+	if (window.isNull()) {
+		return FALSE;
+	}
 	window->resize(width, height);
-	if (is_standalone) {
+	if (!window.isNull() && is_standalone) {
 		window->show();
 		window->raise();
 	}
@@ -212,27 +203,25 @@ gboolean ui_qt_init(gint32 width, gint32 height)
 void ui_qt_quit(void)
 {
 	std::lock_guard<std::mutex> lock(window_mutex);
-	if (window_instance == nullptr) {
+	if (window_instance.isNull()) {
 		return;
 	}
 	if (standalone_window) {
 		window_instance->close();
+		delete window_instance.data();
 	}
-	/*
-	 * Keep the widget instance alive across shutdown to avoid races with the
-	 * render thread dereferencing a stale pointer while the plugin is stopping.
-	 */
+	window_instance = nullptr;
 	standalone_window = false;
 }
 
 void ui_qt_present(const guint16 *pixels, gint32 width, gint32 height)
 {
-	InfinityWindow *window = nullptr;
+	QPointer<InfinityWindow> window;
 	{
 		std::lock_guard<std::mutex> lock(window_mutex);
 		window = window_instance;
 	}
-	if (window == nullptr) {
+	if (window.isNull()) {
 		return;
 	}
 	window->update_frame(pixels, width, height);
@@ -241,12 +230,12 @@ void ui_qt_present(const guint16 *pixels, gint32 width, gint32 height)
 
 void ui_qt_resize(gint32 width, gint32 height)
 {
-	InfinityWindow *window = nullptr;
+	QPointer<InfinityWindow> window;
 	{
 		std::lock_guard<std::mutex> lock(window_mutex);
 		window = window_instance;
 	}
-	if (window == nullptr) {
+	if (window.isNull()) {
 		return;
 	}
 	const qreal ratio = window->devicePixelRatioF();
@@ -258,12 +247,12 @@ void ui_qt_resize(gint32 width, gint32 height)
 
 void ui_qt_toggle_fullscreen(void)
 {
-	InfinityWindow *window = nullptr;
+	QPointer<InfinityWindow> window;
 	{
 		std::lock_guard<std::mutex> lock(window_mutex);
 		window = window_instance;
 	}
-	if (window == nullptr) {
+	if (window.isNull()) {
 		return;
 	}
 	window->set_fullscreen(!window->is_fullscreen());
@@ -275,12 +264,12 @@ void ui_qt_toggle_fullscreen(void)
 
 void ui_qt_exit_fullscreen_if_needed(void)
 {
-	InfinityWindow *window = nullptr;
+	QPointer<InfinityWindow> window;
 	{
 		std::lock_guard<std::mutex> lock(window_mutex);
 		window = window_instance;
 	}
-	if (window == nullptr) {
+	if (window.isNull()) {
 		return;
 	}
 	if (window->is_fullscreen()) {
@@ -295,8 +284,10 @@ void ui_qt_exit_fullscreen_if_needed(void)
 void *ui_qt_get_widget(void)
 {
 	std::lock_guard<std::mutex> lock(window_mutex);
-	ensure_app_instance();
-	if (window_instance == nullptr) {
+	if (QApplication::instance() == nullptr) {
+		return nullptr;
+	}
+	if (window_instance.isNull()) {
 		window_instance = new InfinityWindow();
 		standalone_window = false;
 	}
@@ -305,5 +296,5 @@ void *ui_qt_get_widget(void)
 	 * Audacious can probe both widget hooks, and eager creation would show
 	 * both GTK and Qt windows at load time.
 	 */
-	return window_instance;
+	return window_instance.data();
 }
