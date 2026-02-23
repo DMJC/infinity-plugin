@@ -13,6 +13,7 @@ fs = import('fs')
 glib_dep = dependency('glib-2.0', version: '>=2.28')
 audacious_dep = dependency('audacious', version: '>=3.6')
 gtk_dep = dependency('gtk+-3.0')
+qt_dep = dependency('qt6', modules: ['Core', 'Gui', 'Widgets'])
 
 cc = meson.get_compiler('c')
 

@@ -26,6 +26,7 @@ extern "C" {
 #include "config.h"
 #include "infinity.h"
 #include "types.h"
+#include "ui.h"
 }
 
 #define CFGID "infinity"
@@ -88,8 +89,8 @@ public:
 	bool init ();
 	void cleanup ();
 
-	// No embedded widget; UI toolkit creates its own window.
-	// void * get_gtk_widget ();
+	void * get_gtk_widget ();
+	void * get_qt_widget ();
 
 	void clear ();
 	void render_multi_pcm (const float * pcm, int channels);
@@ -232,6 +233,18 @@ void InfinityPlugin::cleanup(void)
 
 void InfinityPlugin::render_multi_pcm (const float * pcm, int channels) {
 	infinity_render_multi_pcm(pcm, channels);
+}
+
+void *InfinityPlugin::get_gtk_widget ()
+{
+	ui_use_gtk();
+	return ui_get_gtk_widget();
+}
+
+void *InfinityPlugin::get_qt_widget ()
+{
+	ui_use_qt();
+	return ui_get_qt_widget();
 }
 
 static const char * const defaults[] = {

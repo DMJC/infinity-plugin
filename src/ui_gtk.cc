@@ -250,7 +250,7 @@ void notify_current_size() {
 
 } // namespace
 
-gboolean ui_init(gint32 width, gint32 height)
+gboolean ui_gtk_init(gint32 width, gint32 height)
 {
 	if (!ensure_gtk_ready()) {
 		return FALSE;
@@ -292,12 +292,12 @@ gboolean ui_init(gint32 width, gint32 height)
 	return TRUE;
 }
 
-void ui_ensure_app(void)
+void ui_gtk_ensure_app(void)
 {
 	ensure_gtk_ready();
 }
 
-void ui_quit(void)
+void ui_gtk_quit(void)
 {
 	if (window_instance == nullptr) {
 		return;
@@ -307,7 +307,7 @@ void ui_quit(void)
 	drawing_area = nullptr;
 }
 
-void ui_present(const guint16 *pixels, gint32 width, gint32 height)
+void ui_gtk_present(const guint16 *pixels, gint32 width, gint32 height)
 {
 	if (drawing_area == nullptr || pixels == nullptr || width <= 0 || height <= 0) {
 		return;
@@ -321,7 +321,7 @@ void ui_present(const guint16 *pixels, gint32 width, gint32 height)
 	g_main_context_invoke(nullptr, queue_draw, nullptr);
 }
 
-void ui_resize(gint32 width, gint32 height)
+void ui_gtk_resize(gint32 width, gint32 height)
 {
 	if (window_instance == nullptr) {
 		return;
@@ -330,7 +330,7 @@ void ui_resize(gint32 width, gint32 height)
 	g_main_context_invoke(nullptr, apply_resize, request);
 }
 
-void ui_toggle_fullscreen(void)
+void ui_gtk_toggle_fullscreen(void)
 {
 	if (window_instance == nullptr) {
 		return;
@@ -338,10 +338,21 @@ void ui_toggle_fullscreen(void)
 	g_main_context_invoke(nullptr, apply_toggle_fullscreen, nullptr);
 }
 
-void ui_exit_fullscreen_if_needed(void)
+void ui_gtk_exit_fullscreen_if_needed(void)
 {
 	if (window_instance == nullptr || !is_fullscreen) {
 		return;
 	}
 	g_main_context_invoke(nullptr, apply_exit_fullscreen, nullptr);
+}
+
+void *ui_gtk_get_widget(void)
+{
+	if (!ensure_gtk_ready()) {
+		return nullptr;
+	}
+	if (window_instance == nullptr) {
+		ui_gtk_init(512, 288);
+	}
+	return window_instance;
 }
