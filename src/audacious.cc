@@ -101,6 +101,11 @@ private:
 
 EXPORT InfinityPlugin aud_plugin_instance;
 
+static bool use_qt_backend()
+{
+	return aud_get_mainloop_type() == MainloopType::Qt;
+}
+
 static gint32 get_width() {
 	return aud_get_int(CFGID, "width");
 }
@@ -213,6 +218,12 @@ static Player player = {
 
 bool InfinityPlugin::init(void)
 {
+	if (use_qt_backend()) {
+		ui_use_qt();
+	} else {
+		ui_use_gtk();
+	}
+
 	load_settings();
 	init_params();
 	infinity_init(&params, &player);
@@ -237,12 +248,18 @@ void InfinityPlugin::render_multi_pcm (const float * pcm, int channels) {
 
 void *InfinityPlugin::get_gtk_widget ()
 {
+	if (use_qt_backend()) {
+		return nullptr;
+	}
 	ui_use_gtk();
 	return ui_get_gtk_widget();
 }
 
 void *InfinityPlugin::get_qt_widget ()
 {
+	if (!use_qt_backend()) {
+		return nullptr;
+	}
 	ui_use_qt();
 	return ui_get_qt_widget();
 }

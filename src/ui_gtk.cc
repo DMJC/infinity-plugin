@@ -230,6 +230,17 @@ gboolean on_key_press(GtkWidget *, GdkEventKey *event, gpointer) {
 	return FALSE;
 }
 
+void connect_drawing_area_signals(GtkWidget *widget) {
+	if (widget == nullptr) {
+		return;
+	}
+	g_signal_connect(widget, "draw", G_CALLBACK(on_draw), nullptr);
+	g_signal_connect(widget, "size-allocate", G_CALLBACK(on_size_allocate), nullptr);
+	g_signal_connect(widget, "key-press-event", G_CALLBACK(on_key_press), nullptr);
+	gtk_widget_add_events(widget, GDK_KEY_PRESS_MASK);
+	gtk_widget_set_can_focus(widget, TRUE);
+}
+
 gboolean on_window_state(GtkWidget *, GdkEventWindowState *event, gpointer) {
 	if ((event->changed_mask & GDK_WINDOW_STATE_FULLSCREEN) == 0) {
 		return FALSE;
@@ -260,6 +271,11 @@ gboolean ui_gtk_init(gint32 width, gint32 height)
 		return TRUE;
 	}
 
+	if (drawing_area != nullptr) {
+		gtk_widget_set_size_request(drawing_area, std::max(width, 1), std::max(height, 1));
+		return TRUE;
+	}
+
 	window_instance = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 	gtk_window_set_title(GTK_WINDOW(window_instance), "Infinity");
 	gtk_widget_set_size_request(window_instance, 200, 150);
@@ -282,10 +298,9 @@ gboolean ui_gtk_init(gint32 width, gint32 height)
 	g_signal_connect(window_instance, "delete-event", G_CALLBACK(on_delete_event), nullptr);
 	g_signal_connect(window_instance, "show", G_CALLBACK(on_show), nullptr);
 	g_signal_connect(window_instance, "hide", G_CALLBACK(on_hide), nullptr);
-	g_signal_connect(window_instance, "key-press-event", G_CALLBACK(on_key_press), nullptr);
 	g_signal_connect(window_instance, "window-state-event", G_CALLBACK(on_window_state), nullptr);
-	g_signal_connect(drawing_area, "draw", G_CALLBACK(on_draw), nullptr);
-	g_signal_connect(drawing_area, "size-allocate", G_CALLBACK(on_size_allocate), nullptr);
+	g_signal_connect(window_instance, "key-press-event", G_CALLBACK(on_key_press), nullptr);
+	connect_drawing_area_signals(drawing_area);
 
 	gtk_widget_show_all(window_instance);
 	process_events();
@@ -299,12 +314,11 @@ void ui_gtk_ensure_app(void)
 
 void ui_gtk_quit(void)
 {
-	if (window_instance == nullptr) {
-		return;
+	if (window_instance != nullptr) {
+		gtk_widget_destroy(window_instance);
+		window_instance = nullptr;
+		drawing_area = nullptr;
 	}
-	gtk_widget_destroy(window_instance);
-	window_instance = nullptr;
-	drawing_area = nullptr;
 }
 
 void ui_gtk_present(const guint16 *pixels, gint32 width, gint32 height)
@@ -324,6 +338,9 @@ void ui_gtk_present(const guint16 *pixels, gint32 width, gint32 height)
 void ui_gtk_resize(gint32 width, gint32 height)
 {
 	if (window_instance == nullptr) {
+		if (drawing_area != nullptr) {
+			gtk_widget_set_size_request(drawing_area, std::max(width, 1), std::max(height, 1));
+		}
 		return;
 	}
 	auto *request = new ResizeRequest{width, height};
@@ -351,11 +368,15 @@ void *ui_gtk_get_widget(void)
 	if (!ensure_gtk_ready()) {
 		return nullptr;
 	}
+	if (drawing_area == nullptr) {
+		drawing_area = gtk_drawing_area_new();
+		connect_drawing_area_signals(drawing_area);
+	}
 	/*
 	 * Do not create/show a window here.
 	 * Audacious may query both toolkit widget hooks during plugin discovery;
 	 * creating windows from both hooks leads to two visible windows.
 	 * The selected backend window is created later through ui_init().
 	 */
-	return window_instance;
+	return drawing_area;
 }

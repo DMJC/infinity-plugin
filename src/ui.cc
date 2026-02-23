@@ -6,19 +6,27 @@ enum class UiBackend {
 };
 
 static UiBackend backend = UiBackend::Gtk;
+static bool backend_locked = false;
 
 void ui_use_gtk(void)
 {
+	if (backend_locked && backend != UiBackend::Gtk) {
+		return;
+	}
 	backend = UiBackend::Gtk;
 }
 
 void ui_use_qt(void)
 {
+	if (backend_locked && backend != UiBackend::Qt) {
+		return;
+	}
 	backend = UiBackend::Qt;
 }
 
 gboolean ui_init(gint32 width, gint32 height)
 {
+	backend_locked = true;
 	return backend == UiBackend::Qt ? ui_qt_init(width, height) : ui_gtk_init(width, height);
 }
 
@@ -69,12 +77,10 @@ void ui_exit_fullscreen_if_needed(void)
 
 void *ui_get_gtk_widget(void)
 {
-	ui_use_gtk();
 	return ui_gtk_get_widget();
 }
 
 void *ui_get_qt_widget(void)
 {
-	ui_use_qt();
 	return ui_qt_get_widget();
 }

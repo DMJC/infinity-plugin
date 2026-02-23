@@ -147,6 +147,7 @@ private:
 
 InfinityWindow *window_instance = nullptr;
 std::unique_ptr<QApplication> app_instance;
+bool standalone_window = false;
 
 void ensure_app_instance() {
 	if (QApplication::instance() != nullptr) {
@@ -175,10 +176,17 @@ gboolean ui_qt_init(gint32 width, gint32 height)
 	}
 
 	if (window_instance != nullptr) {
+		window_instance->resize(width, height);
+		if (standalone_window) {
+			window_instance->show();
+			window_instance->raise();
+		}
+		process_events();
 		return TRUE;
 	}
 
 	window_instance = new InfinityWindow();
+	standalone_window = true;
 	window_instance->resize(width, height);
 	window_instance->show();
 	window_instance->raise();
@@ -191,9 +199,12 @@ void ui_qt_quit(void)
 	if (window_instance == nullptr) {
 		return;
 	}
-	window_instance->close();
-	delete window_instance;
+	if (standalone_window) {
+		window_instance->close();
+		delete window_instance;
+	}
 	window_instance = nullptr;
+	standalone_window = false;
 }
 
 void ui_qt_present(const guint16 *pixels, gint32 width, gint32 height)
@@ -245,8 +256,13 @@ void ui_qt_exit_fullscreen_if_needed(void)
 
 void *ui_qt_get_widget(void)
 {
+	ensure_app_instance();
+	if (window_instance == nullptr) {
+		window_instance = new InfinityWindow();
+		standalone_window = false;
+	}
 	/*
-	 * Do not create/show a window from the widget getter.
+	 * Create the widget instance but do not show a top-level window here.
 	 * Audacious can probe both widget hooks, and eager creation would show
 	 * both GTK and Qt windows at load time.
 	 */
